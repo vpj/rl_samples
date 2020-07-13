@@ -1,0 +1,13 @@
+*.pt
+*.swp
+.DS_Store
+.ipynb_checkpoints/
+docs/
+logs/
+__pycache__/
+bench
+data
+.idea/*
+!.idea/dictionaries
+.labml_dashboard.yaml
+labml

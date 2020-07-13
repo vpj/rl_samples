@@ -1,0 +1,5 @@
+torch
+numpy
+gym[atari]
+opencv-python
+labml
