@@ -1,4 +1,9 @@
 """
+The code for this tutorial is available at
+[Github labml/rl_samples](https://github.com/lab-ml/rl_samples).
+And the web version of the tutorial is available
+[on my blog](http://blog.varunajayasiri.com/ml/ppo_pytorch.html).
+
 The implementation has four main classes.
 
 * [Game](#game) - a wrapper for gym environment
