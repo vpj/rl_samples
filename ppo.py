@@ -254,7 +254,7 @@ class Model(nn.Module):
                                out_features=1)
         nn.init.orthogonal_(self.value.weight, 1)
 
-    def forward(self, obs: np.ndarray):
+    def forward(self, obs: torch.Tensor):
         h: torch.Tensor
 
         h = F.relu(self.conv1(obs))
@@ -396,7 +396,7 @@ class Trainer:
         self.optimizer = optim.Adam(self.model.parameters(), lr=2.5e-4)
 
     def train(self,
-              samples: Dict[str, np.ndarray],
+              samples: Dict[str, torch.Tensor],
               learning_rate: float,
               clip_range: float):
         # sampled observations are fed into the model to get $\pi_\theta(a_t|s_t)$;
@@ -516,7 +516,7 @@ class Trainer:
                 clip_fraction]
 
     @staticmethod
-    def _normalize(adv: np.ndarray):
+    def _normalize(adv: torch.Tensor):
         """#### Normalize advantage function"""
         return (adv - adv.mean()) / (adv.std() + 1e-8)
 
@@ -701,7 +701,7 @@ class Main:
 
         return advantages
 
-    def train(self, samples: Dict[str, np.ndarray], learning_rate: float, clip_range: float):
+    def train(self, samples: Dict[str, torch.Tensor], learning_rate: float, clip_range: float):
         """
         ### Train the model based on samples
         """
