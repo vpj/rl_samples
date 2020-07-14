@@ -1,0 +1,3 @@
+web_api:
+  url: https://api.lab-ml.com/api/slack/message/67b9bc32-f322-4031-b7d1-0a4088ae53ae
+  frequency: 300
