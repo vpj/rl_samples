@@ -1,15 +1,16 @@
 """
+This is a minimalistic version of Proximal Policy Optimization (PPO)
+ for Atari Breakout game on OpenAI Gym.
+This has less than 250 lines of code.
+It runs the game environments on multiple processes to sample efficiently.
+Advantages are calculated using Generalized Advantage Estimation.
+
 The code for this tutorial is available at
 [Github labml/rl_samples](https://github.com/lab-ml/rl_samples).
 And the web version of the tutorial is available
 [on my blog](http://blog.varunajayasiri.com/ml/ppo_pytorch.html).
 
-The implementation has four main classes.
-
-* [Game](#game) - a wrapper for gym environment
-* [Model](#model) - neural network model for policy and value function
-* [Trainer](#trainer) - policy and value function updater
-* [Math](#main) - runs the training loop; sampling and training
+It runs game environments on separate processes for faster sampling.
 
 If someone reading this has any questions or comments
  please find me on Twitter,
@@ -18,7 +19,6 @@ If someone reading this has any questions or comments
 
 import multiprocessing
 import multiprocessing.connection
-import time
 from typing import Dict, List
 
 import cv2
@@ -174,7 +174,6 @@ def worker_process(remote: multiprocessing.connection.Connection, seed: int):
 
 class Worker:
     """
-    ## Worker
     Creates a new worker and runs it in a separate process.
     """
 
@@ -195,31 +194,25 @@ class Model(nn.Module):
         # The first convolution layer takes a
         # 84x84 frame and produces a 20x20 frame
         self.conv1 = nn.Conv2d(in_channels=4, out_channels=32, kernel_size=8, stride=4)
-        nn.init.orthogonal_(self.conv1.weight, np.sqrt(2))
 
         # The second convolution layer takes a
         # 20x20 frame and produces a 9x9 frame
         self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, stride=2)
-        nn.init.orthogonal_(self.conv2.weight, np.sqrt(2))
 
         # The third convolution layer takes a
         # 9x9 frame and produces a 7x7 frame
         self.conv3 = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1)
-        nn.init.orthogonal_(self.conv3.weight, np.sqrt(2))
 
         # A fully connected layer takes the flattened
         # frame from third convolution layer, and outputs
         # 512 features
         self.lin = nn.Linear(in_features=7 * 7 * 64, out_features=512)
-        nn.init.orthogonal_(self.lin.weight, np.sqrt(2))
 
         # A fully connected layer to get logits for $\pi$
         self.pi_logits = nn.Linear(in_features=512, out_features=4)
-        nn.init.orthogonal_(self.pi_logits.weight, np.sqrt(0.01))
 
         # A fully connected layer to get value function
         self.value = nn.Linear(in_features=512, out_features=1)
-        nn.init.orthogonal_(self.value.weight, 1)
 
     def forward(self, obs: torch.Tensor):
         h = F.relu(self.conv1(obs))
@@ -241,18 +234,7 @@ def obs_to_torch(obs: np.ndarray) -> torch.Tensor:
 
 
 class Main:
-    """
-    ## <a name="main"></a>Main class
-    This class runs the training loop.
-    It initializes TensorFlow, handles logging and monitoring,
-     and runs workers as multiple processes.
-    """
-
     def __init__(self):
-        """
-        ### Initialize
-        """
-
         # #### Configurations
 
         # $\gamma$ and $\lambda$ for advantage calculation
@@ -261,7 +243,6 @@ class Main:
 
         # number of updates
         self.updates = 10000
-
         # number of epochs to train the model with sampled data
         self.epochs = 4
         # number of worker processes
@@ -289,8 +270,7 @@ class Main:
             self.obs[i] = worker.child.recv()
 
         # model for sampling
-        self.model = Model()
-        self.model.to(device)
+        self.model = Model().to(device)
 
         # optimizer
         self.optimizer = optim.Adam(self.model.parameters(), lr=2.5e-4)
@@ -300,7 +280,7 @@ class Main:
 
         rewards = np.zeros((self.n_workers, self.worker_steps), dtype=np.float32)
         actions = np.zeros((self.n_workers, self.worker_steps), dtype=np.int32)
-        dones = np.zeros((self.n_workers, self.worker_steps), dtype=np.bool)
+        done = np.zeros((self.n_workers, self.worker_steps), dtype=np.bool)
         obs = np.zeros((self.n_workers, self.worker_steps, 4, 84, 84), dtype=np.uint8)
         log_pis = np.zeros((self.n_workers, self.worker_steps), dtype=np.float32)
         values = np.zeros((self.n_workers, self.worker_steps), dtype=np.float32)
@@ -325,7 +305,7 @@ class Main:
 
             for w, worker in enumerate(self.workers):
                 # get results after executing the actions
-                self.obs[w], rewards[w, t], dones[w, t], info = worker.child.recv()
+                self.obs[w], rewards[w, t], done[w, t], info = worker.child.recv()
 
                 # collect episode info, which is available if an episode finished;
                 #  this includes total reward and length of the episode -
@@ -336,7 +316,7 @@ class Main:
                     tracker.add('length', info['length'])
 
         # calculate advantages
-        advantages = self._calc_advantages(dones, rewards, values)
+        advantages = self._calc_advantages(done, rewards, values)
         samples = {
             'obs': obs,
             'actions': actions,
@@ -357,8 +337,7 @@ class Main:
 
         return samples_flat
 
-    def _calc_advantages(self, dones: np.ndarray, rewards: np.ndarray,
-                         values: np.ndarray) -> np.ndarray:
+    def _calc_advantages(self, done: np.ndarray, rewards: np.ndarray, values: np.ndarray) -> np.ndarray:
         """
         ### Calculate advantages
         \begin{align}
@@ -400,7 +379,7 @@ class Main:
 
         for t in reversed(range(self.worker_steps)):
             # mask if episode completed after step $t$
-            mask = 1.0 - dones[:, t]
+            mask = 1.0 - done[:, t]
             last_value = last_value * mask
             last_advantage = last_advantage * mask
             # $\delta_t$
@@ -447,7 +426,7 @@ class Main:
 
                 # train
                 loss = self._calc_loss(clip_range=clip_range,
-                                            samples=mini_batch)
+                                       samples=mini_batch)
 
                 # compute gradients
                 for pg in self.optimizer.param_groups:
@@ -462,7 +441,7 @@ class Main:
         """#### Normalize advantage function"""
         return (adv - adv.mean()) / (adv.std() + 1e-8)
 
-    def _calc_loss(self, samples: Dict[str, torch.Tensor], clip_range: float):
+    def _calc_loss(self, samples: Dict[str, torch.Tensor], clip_range: float) -> torch.Tensor:
         """
         ## PPO Loss
 
