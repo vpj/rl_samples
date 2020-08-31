@@ -32,7 +32,7 @@ from torch.distributions import Categorical
 from torch.nn import functional as F
 
 if torch.cuda.is_available():
-    device = torch.device("cuda:0")
+    device = torch.device("cuda:1")
 else:
     device = torch.device("cpu")
 
@@ -43,38 +43,25 @@ class Game:
     This is a wrapper for OpenAI gym game environment.
     We do a few things here:
 
-    1. Apply the same action on four frames
+    1. Apply the same action on four frames and get the last frame
     2. Convert observation frames to gray and scale it to (84, 84)
-    3. Take the maximum of last two of those four frames
-    4. Collect four such frames for last three actions
-    5. Add episode information (total reward for the entire episode) for monitoring
-    6. Restrict an episode to a single life (game has 5 lives, we reset after every single life)
+    3. Stack four frames of the last four actions
+    4. Add episode information (total reward for the entire episode) for monitoring
+    5. Restrict an episode to a single life (game has 5 lives, we reset after every single life)
 
     #### Observation format
-    Observation is tensor of size (84, 84, 4). It is four frames
-    (images of the game screen) stacked on last axis.
+    Observation is tensor of size (4, 84, 84). It is four frames
+    (images of the game screen) stacked on first axis.
     i.e, each channel is a frame.
-
-        Frames    00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15
-        Actions   a1 a1 a1 a1 a2 a2 a2 a2 a3 a3 a3 a3 a4 a4 a4 a4
-        Max       -- -- MM MM -- -- MM MM -- -- MM MM -- -- MM MM
-        Stacked   -- -- Stack -- -- Stack -- -- Stack -- -- Stack
     """
 
     def __init__(self, seed: int):
-        """
-        ### Initialize
-        """
-
         # create environment
         self.env = gym.make('BreakoutNoFrameskip-v4')
         self.env.seed(seed)
 
-        # buffer to take the maximum of last 2 frames for each action
-        self.obs_2_max = np.zeros((2, 84, 84, 1), np.uint8)
-
         # tensor for a stack of 4 frames
-        self.obs_4 = np.zeros((84, 84, 4))
+        self.obs_4 = np.zeros((4, 84, 84))
 
         # keep track of the episode rewards
         self.rewards = []
@@ -87,7 +74,7 @@ class Game:
         Executes `action` for 4 time steps and
          returns a tuple of (observation, reward, done, episode_info).
 
-        * `observation`: stacked 4 frames (this frame and frames for last 3 actions) as described above
+        * `observation`: stacked 4 frames (this frame and frames for last 3 actions)
         * `reward`: total reward while the action was executed
         * `done`: whether the episode finished (a life lost)
         * `episode_info`: episode information if completed
@@ -101,10 +88,6 @@ class Game:
             # execute the action in the OpenAI Gym environment
             obs, r, done, info = self.env.step(action)
 
-            # add last two frames to buffer
-            if i >= 2:
-                self.obs_2_max[i % 2] = self._process_obs(obs)
-
             reward += r
 
             # get number of lives left
@@ -112,28 +95,26 @@ class Game:
             # reset if a life is lost
             if lives < self.lives:
                 done = True
-            self.lives = lives
-
-            # stop if episode finished
-            if done:
                 break
+
+        # Transform the last observation to (84, 84)
+        obs = self._process_obs(obs)
 
         # maintain rewards for each step
         self.rewards.append(reward)
 
         if done:
             # if finished, set episode information if episode is over, and reset
-            episode_info = {"reward": sum(self.rewards),
-                            "length": len(self.rewards)}
+            episode_info = {"reward": sum(self.rewards), "length": len(self.rewards)}
             self.reset()
         else:
             episode_info = None
             # get the max of last two frames
-            obs = self.obs_2_max.max(axis=0)
+            # obs = self.obs_2_max.max(axis=0)
 
             # push it to the stack of 4 frames
-            self.obs_4 = np.roll(self.obs_4, shift=-1, axis=-1)
-            self.obs_4[..., -1:] = obs
+            self.obs_4 = np.roll(self.obs_4, shift=-1, axis=0)
+            self.obs_4[-1] = obs
 
         return self.obs_4, reward, done, episode_info
 
@@ -148,10 +129,8 @@ class Game:
 
         # reset caches
         obs = self._process_obs(obs)
-        self.obs_4[..., 0:] = obs
-        self.obs_4[..., 1:] = obs
-        self.obs_4[..., 2:] = obs
-        self.obs_4[..., 3:] = obs
+        for i in range(4):
+            self.obs_4[i] = obs
         self.rewards = []
 
         self.lives = self.env.unwrapped.ale.lives()
@@ -166,7 +145,7 @@ class Game:
         """
         obs = cv2.cvtColor(obs, cv2.COLOR_RGB2GRAY)
         obs = cv2.resize(obs, (84, 84), interpolation=cv2.INTER_AREA)
-        return obs[:, :, None]  # Shape (84, 84, 1)
+        return obs
 
 
 def worker_process(remote: multiprocessing.connection.Connection, seed: int):
@@ -198,8 +177,6 @@ class Worker:
     ## Worker
     Creates a new worker and runs it in a separate process.
     """
-    child: multiprocessing.connection.Connection
-    process: multiprocessing.Process
 
     def __init__(self, seed):
         self.child, parent = multiprocessing.Pipe()
@@ -217,46 +194,31 @@ class Model(nn.Module):
 
         # The first convolution layer takes a
         # 84x84 frame and produces a 20x20 frame
-        self.conv1 = nn.Conv2d(in_channels=4,
-                               out_channels=32,
-                               kernel_size=8,
-                               stride=4,
-                               padding=0)
+        self.conv1 = nn.Conv2d(in_channels=4, out_channels=32, kernel_size=8, stride=4)
         nn.init.orthogonal_(self.conv1.weight, np.sqrt(2))
 
         # The second convolution layer takes a
         # 20x20 frame and produces a 9x9 frame
-        self.conv2 = nn.Conv2d(in_channels=32,
-                               out_channels=64,
-                               kernel_size=4,
-                               stride=2,
-                               padding=0)
+        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, stride=2)
         nn.init.orthogonal_(self.conv2.weight, np.sqrt(2))
 
         # The third convolution layer takes a
         # 9x9 frame and produces a 7x7 frame
-        self.conv3 = nn.Conv2d(in_channels=64,
-                               out_channels=64,
-                               kernel_size=3,
-                               stride=1,
-                               padding=0)
+        self.conv3 = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1)
         nn.init.orthogonal_(self.conv3.weight, np.sqrt(2))
 
         # A fully connected layer takes the flattened
-        # frame from thrid convolution layer, and outputs
+        # frame from third convolution layer, and outputs
         # 512 features
-        self.lin = nn.Linear(in_features=7 * 7 * 64,
-                             out_features=512)
+        self.lin = nn.Linear(in_features=7 * 7 * 64, out_features=512)
         nn.init.orthogonal_(self.lin.weight, np.sqrt(2))
 
         # A fully connected layer to get logits for $\pi$
-        self.pi_logits = nn.Linear(in_features=512,
-                                   out_features=4)
+        self.pi_logits = nn.Linear(in_features=512, out_features=4)
         nn.init.orthogonal_(self.pi_logits.weight, np.sqrt(0.01))
 
         # A fully connected layer to get value function
-        self.value = nn.Linear(in_features=512,
-                               out_features=1)
+        self.value = nn.Linear(in_features=512, out_features=1)
         nn.init.orthogonal_(self.value.weight, 1)
 
     def forward(self, obs: torch.Tensor):
@@ -276,10 +238,6 @@ class Model(nn.Module):
 
 
 def obs_to_torch(obs: np.ndarray) -> torch.Tensor:
-    # `[N, H, W, C]` to `[N, C, H, W]`
-    obs = np.swapaxes(obs, 1, 3)
-    obs = np.swapaxes(obs, 3, 2)
-
     # scale to `[0, 1]`
     return torch.tensor(obs, dtype=torch.float32, device=device) / 255.
 
@@ -298,12 +256,6 @@ class Trainer:
     \mathbb{E}_{\tau \sim \pi_\theta} \Biggl[
      \sum_{t=0}^\infty \gamma^t A^{\pi_{OLD}}(s_t, a_t)
     \Biggr] &=
-    \\
-    \mathbb{E}_{\tau \sim \pi_\theta} \Biggl[
-      \sum_{t=0}^\infty \gamma^t \Bigl(
-       Q^{\pi_{OLD}}(s_t, a_t) - V^{\pi_{OLD}}(s_t)
-      \Bigr)
-     \Biggr] &=
     \\
     \mathbb{E}_{\tau \sim \pi_\theta} \Biggl[
       \sum_{t=0}^\infty \gamma^t \Bigl(
@@ -400,16 +352,7 @@ class Trainer:
         self.model = model
         self.optimizer = optim.Adam(self.model.parameters(), lr=2.5e-4)
 
-    def train(self,
-              samples: Dict[str, torch.Tensor],
-              learning_rate: float,
-              clip_range: float):
-        # sampled observations are fed into the model to get $\pi_\theta(a_t|s_t)$;
-        #  we are treating observations as state
-        sampled_obs = samples['obs']
-
-        # $a_t$ actions sampled from $\pi_{\theta_{OLD}}$
-        sampled_action = samples['actions']
+    def train(self, samples: Dict[str, torch.Tensor], learning_rate: float, clip_range: float):
         # $R_t$ returns sampled from $\pi_{\theta_{OLD}}$
         sampled_return = samples['values'] + samples['advantages']
 
@@ -424,13 +367,14 @@ class Trainer:
         # $\hat{V_t}$ value estimates
         sampled_value = samples['values']
 
-        # `pi_logits` and $V^{\pi_\theta}(s_t)$
-        pi, value = self.model(sampled_obs)
+        # Sampled observations are fed into the model to get $\pi_\theta(a_t|s_t)$ and $V^{\pi_\theta}(s_t)$;
+        #  we are treating observations as state
+        pi, value = self.model(samples['obs'])
 
         # #### Policy
 
-        # $-\log \pi_\theta (a_t|s_t)$
-        neg_log_pi = -pi.log_prob(sampled_action)
+        # $-\log \pi_\theta (a_t|s_t)$, $a_t$ are actions sampled from $\pi_{\theta_{OLD}}$
+        neg_log_pi = -pi.log_prob(samples['actions'])
 
         # ratio $r_t(\theta) = \frac{\pi_\theta (a_t|s_t)}{\pi_{\theta_{OLD}} (a_t|s_t)}$;
         # *this is different from rewards* $r_t$.
@@ -514,11 +458,11 @@ class Trainer:
         approx_kl_divergence = .5 * ((neg_log_pi - sampled_neg_log_pi) ** 2).mean()
         clip_fraction = (abs((ratio - 1.0)) > clip_range).to(torch.float).mean()
 
-        return [policy_reward,
-                vf_loss,
-                entropy_bonus,
-                approx_kl_divergence,
-                clip_fraction]
+        tracker.add({'policy_reward': policy_reward,
+                     'vf_loss': vf_loss,
+                     'entropy_bonus': entropy_bonus,
+                     'kl_div': approx_kl_divergence,
+                     'clip_fraction': clip_fraction})
 
     @staticmethod
     def _normalize(adv: torch.Tensor):
@@ -568,7 +512,7 @@ class Main:
         self.workers = [Worker(47 + i) for i in range(self.n_workers)]
 
         # initialize tensors for observations
-        self.obs = np.zeros((self.n_workers, 84, 84, 4), dtype=np.uint8)
+        self.obs = np.zeros((self.n_workers, 4, 84, 84), dtype=np.uint8)
         for worker in self.workers:
             worker.child.send(("reset", None))
         for i, worker in enumerate(self.workers):
@@ -586,22 +530,23 @@ class Main:
         rewards = np.zeros((self.n_workers, self.worker_steps), dtype=np.float32)
         actions = np.zeros((self.n_workers, self.worker_steps), dtype=np.int32)
         dones = np.zeros((self.n_workers, self.worker_steps), dtype=np.bool)
-        obs = np.zeros((self.n_workers, self.worker_steps, 84, 84, 4), dtype=np.uint8)
+        obs = np.zeros((self.n_workers, self.worker_steps, 4, 84, 84), dtype=np.uint8)
         neg_log_pis = np.zeros((self.n_workers, self.worker_steps), dtype=np.float32)
         values = np.zeros((self.n_workers, self.worker_steps), dtype=np.float32)
 
         # sample `worker_steps` from each worker
         for t in range(self.worker_steps):
-            # `self.obs` keeps track of the last observation from each worker,
-            #  which is the input for the model to sample the next action
-            obs[:, t] = self.obs
-            # sample actions from $\pi_{\theta_{OLD}}$ for each worker;
-            #  this returns arrays of size `n_workers`
-            pi, v = self.model(obs_to_torch(self.obs))
-            values[:, t] = v.cpu().data.numpy()
-            a = pi.sample()
-            actions[:, t] = a.cpu().data.numpy()
-            neg_log_pis[:, t] = -pi.log_prob(a).cpu().data.numpy()
+            with torch.no_grad():
+                # `self.obs` keeps track of the last observation from each worker,
+                #  which is the input for the model to sample the next action
+                obs[:, t] = self.obs
+                # sample actions from $\pi_{\theta_{OLD}}$ for each worker;
+                #  this returns arrays of size `n_workers`
+                pi, v = self.model(obs_to_torch(self.obs))
+                values[:, t] = v.cpu().numpy()
+                a = pi.sample()
+                actions[:, t] = a.cpu().numpy()
+                neg_log_pis[:, t] = -pi.log_prob(a).cpu().numpy()
 
             # run sampled actions on each worker
             for w, worker in enumerate(self.workers):
@@ -711,9 +656,6 @@ class Main:
         ### Train the model based on samples
         """
 
-        # collect training information like losses for monitoring
-        train_info = []
-
         # It learns faster with a higher number of epochs,
         #  but becomes a little unstable; that is,
         #  the average episode reward does not monotonically increase
@@ -733,15 +675,9 @@ class Main:
                     mini_batch[k] = v[mini_batch_indexes]
 
                 # train
-                res = self.trainer.train(learning_rate=learning_rate,
-                                         clip_range=clip_range,
-                                         samples=mini_batch)
-
-                # append to training information
-                train_info.append(res)
-
-        # return average of training information
-        return np.mean(train_info, axis=0)
+                self.trainer.train(learning_rate=learning_rate,
+                                   clip_range=clip_range,
+                                   samples=mini_batch)
 
     def run_training_loop(self):
         """
@@ -753,7 +689,6 @@ class Main:
         tracker.set_queue('length', 100, True)
 
         for update in monit.loop(self.updates):
-            time_start = time.time()
             progress = update / self.updates
 
             # decreasing `learning_rate` and `clip_range` $\epsilon$
@@ -766,15 +701,10 @@ class Main:
             # train the model
             self.train(samples, learning_rate, clip_range)
 
-            time_end = time.time()
-            # frame rate
-            fps = int(self.batch_size / (time_end - time_start))
-
             # write summary info to the writer, and log to the screen
-            tracker.save(fps=fps)
+            tracker.save()
             if (update + 1) % 1_000 == 0:
                 logger.log()
-            # print(f"{update:4}: fps={fps:3} reward={reward_mean:.2f} length={length_mean:.3f}")
 
     def destroy(self):
         """
