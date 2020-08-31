@@ -222,8 +222,6 @@ class Model(nn.Module):
         nn.init.orthogonal_(self.value.weight, 1)
 
     def forward(self, obs: torch.Tensor):
-        h: torch.Tensor
-
         h = F.relu(self.conv1(obs))
         h = F.relu(self.conv2(h))
         h = F.relu(self.conv3(h))
@@ -362,11 +360,6 @@ class Trainer:
         #  for the calculation of $\hat{A}_t$.
         sampled_normalized_advantage = Trainer._normalize(samples['advantages'])
 
-        # $-\log \pi_{\theta_{OLD}} (a_t|s_t)$ log probabilities
-        sampled_neg_log_pi = samples['neg_log_pis']
-        # $\hat{V_t}$ value estimates
-        sampled_value = samples['values']
-
         # Sampled observations are fed into the model to get $\pi_\theta(a_t|s_t)$ and $V^{\pi_\theta}(s_t)$;
         #  we are treating observations as state
         pi, value = self.model(samples['obs'])
@@ -374,11 +367,11 @@ class Trainer:
         # #### Policy
 
         # $-\log \pi_\theta (a_t|s_t)$, $a_t$ are actions sampled from $\pi_{\theta_{OLD}}$
-        neg_log_pi = -pi.log_prob(samples['actions'])
+        log_pi = pi.log_prob(samples['actions'])
 
         # ratio $r_t(\theta) = \frac{\pi_\theta (a_t|s_t)}{\pi_{\theta_{OLD}} (a_t|s_t)}$;
         # *this is different from rewards* $r_t$.
-        ratio: torch.Tensor = torch.exp(sampled_neg_log_pi - neg_log_pi)
+        ratio = torch.exp(log_pi - samples['log_pis'])
 
         # \begin{align}
         # \mathcal{L}^{CLIP}(\theta) =
@@ -433,8 +426,8 @@ class Trainer:
         #
         # Clipping makes sure the value function $V_\theta$ doesn't deviate
         #  significantly from $V_{\theta_{OLD}}$.
-        clipped_value = sampled_value + (value - sampled_value).clamp(min=-clip_range,
-                                                                      max=clip_range)
+        clipped_value = samples['values'] + (value - samples['values']).clamp(min=-clip_range,
+                                                                              max=clip_range)
         vf_loss = torch.max((value - sampled_return) ** 2, (clipped_value - sampled_return) ** 2)
         vf_loss = 0.5 * vf_loss.mean()
 
@@ -444,7 +437,7 @@ class Trainer:
 
         # we want to maximize $\mathcal{L}^{CLIP+VF+EB}(\theta)$
         # so we take the negative of it as the loss
-        loss: torch.Tensor = -(policy_reward - 0.5 * vf_loss + 0.01 * entropy_bonus)
+        loss = -(policy_reward - 0.5 * vf_loss + 0.01 * entropy_bonus)
 
         # compute gradients
         for pg in self.optimizer.param_groups:
@@ -455,7 +448,7 @@ class Trainer:
         self.optimizer.step()
 
         # for monitoring
-        approx_kl_divergence = .5 * ((neg_log_pi - sampled_neg_log_pi) ** 2).mean()
+        approx_kl_divergence = .5 * ((samples['log_pis'] - log_pi) ** 2).mean()
         clip_fraction = (abs((ratio - 1.0)) > clip_range).to(torch.float).mean()
 
         tracker.add({'policy_reward': policy_reward,
@@ -531,7 +524,7 @@ class Main:
         actions = np.zeros((self.n_workers, self.worker_steps), dtype=np.int32)
         dones = np.zeros((self.n_workers, self.worker_steps), dtype=np.bool)
         obs = np.zeros((self.n_workers, self.worker_steps, 4, 84, 84), dtype=np.uint8)
-        neg_log_pis = np.zeros((self.n_workers, self.worker_steps), dtype=np.float32)
+        log_pis = np.zeros((self.n_workers, self.worker_steps), dtype=np.float32)
         values = np.zeros((self.n_workers, self.worker_steps), dtype=np.float32)
 
         # sample `worker_steps` from each worker
@@ -546,7 +539,7 @@ class Main:
                 values[:, t] = v.cpu().numpy()
                 a = pi.sample()
                 actions[:, t] = a.cpu().numpy()
-                neg_log_pis[:, t] = -pi.log_prob(a).cpu().numpy()
+                log_pis[:, t] = pi.log_prob(a).cpu().numpy()
 
             # run sampled actions on each worker
             for w, worker in enumerate(self.workers):
@@ -570,7 +563,7 @@ class Main:
             'obs': obs,
             'actions': actions,
             'values': values,
-            'neg_log_pis': neg_log_pis,
+            'log_pis': log_pis,
             'advantages': advantages
         }
 
