@@ -1,20 +1,17 @@
 """
-This is a minimalistic version of Proximal Policy Optimization (PPO)
- for Atari Breakout game on OpenAI Gym.
+This is a minimalistic implementation of [Proximal Policy Optimization - PPO](https://arxiv.org/abs/1707.06347)
+ clipped version for Atari Breakout game on OpenAI Gym.
 This has less than 250 lines of code.
 It runs the game environments on multiple processes to sample efficiently.
-Advantages are calculated using Generalized Advantage Estimation.
+Advantages are calculated using [Generalized Advantage Estimation](https://arxiv.org/abs/1506.02438).
 
-The code for this tutorial is available at
-[Github labml/rl_samples](https://github.com/lab-ml/rl_samples).
+**The code for this tutorial is available at
+[Github labml/rl_samples](https://github.com/lab-ml/rl_samples).**
 And the web version of the tutorial is available
 [on my blog](http://blog.varunajayasiri.com/ml/ppo_pytorch.html).
 
-It runs game environments on separate processes for faster sampling.
-
 If someone reading this has any questions or comments
- please find me on Twitter,
- **[@vpj](https://twitter.com/vpj)**.
+ please find me on Twitter, **[@vpj](https://twitter.com/vpj)**.
 """
 
 import multiprocessing
