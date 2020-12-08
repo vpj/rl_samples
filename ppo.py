@@ -1,4 +1,6 @@
 """
+# Proximal Policy Optimization - PPO in PyTorch
+
 This is a minimalistic implementation of [Proximal Policy Optimization - PPO](https://arxiv.org/abs/1707.06347)
  clipped version for Atari Breakout game on OpenAI Gym.
 This has less than 250 lines of code.
