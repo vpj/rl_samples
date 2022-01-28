@@ -342,6 +342,7 @@ class Main:
     def _calc_advantages(self, done: np.ndarray, rewards: np.ndarray, values: np.ndarray) -> np.ndarray:
         """
         ### Calculate advantages
+
         \begin{align}
         \hat{A_t^{(1)}} &= r_t + \gamma V(s_{t+1}) - V(s)
         \\
@@ -490,6 +491,7 @@ class Main:
          $$d^\pi(s) = (1 - \gamma) \sum_{t=0}^\infty \gamma^t P(s_t = s | \pi)$$
 
         Then,
+        
         \begin{align}
         J(\pi_\theta) - J(\pi_{\theta_{OLD}})
         &= \mathbb{E}_{\tau \sim \pi_\theta} \Biggl[
