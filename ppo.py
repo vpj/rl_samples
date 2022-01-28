@@ -38,7 +38,10 @@ else:
 
 class Game:
     """
-    ## <a name="game-environment"></a>Game environment
+    <a id="game-environment"></a>
+
+    ## Game environment
+    
     This is a wrapper for OpenAI gym game environment.
     We do a few things here:
 
