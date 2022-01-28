@@ -38,7 +38,7 @@ else:
 
 class Game:
     """
-    <a id="game-environment"></a>
+    <a id="GameEnvironment"></a>
 
     ## Game environment
     
